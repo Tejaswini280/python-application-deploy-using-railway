@@ -47,3 +47,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Flask-Migrate - DO NOT ignore migrations folder!
+# migrations/ should be committed to git

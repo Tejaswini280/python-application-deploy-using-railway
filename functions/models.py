@@ -1,109 +1,76 @@
-import psycopg2
-import os
+﻿from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 
-class Schema:
-    def __init__(self):
-        self.conn = self.get_connection()
-        self.create_to_do_table()
+# Initialize SQLAlchemy (will be configured in app.py)
+db = SQLAlchemy()
 
-    def get_connection(self):
-        return psycopg2.connect(
-            host=os.getenv("DB_HOST", "db"),
-            database=os.getenv("DB_NAME", "todoapp"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "password"),
-            port=os.getenv("DB_PORT", "5432")
-        )
+# ---------------- Todo Model -----------------
+class Todo(db.Model):
+    __tablename__ = 'Todo'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    Title = db.Column(db.String(200), nullable=False)
+    Description = db.Column(db.Text, nullable=True)
+    _is_deleted = db.Column(db.Boolean, default=False, nullable=False)
+    CreatedOn = db.Column(db.Date, default=datetime.utcnow().date, nullable=False)
+    DueDate = db.Column(db.Date, nullable=True)
+    
+    def __repr__(self):
+        return f'<Todo {self.id}: {self.Title}>'
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'Title': self.Title,
+            'Description': self.Description,
+            '_is_deleted': self._is_deleted,
+            'CreatedOn': self.CreatedOn.isoformat() if self.CreatedOn else None,
+            'DueDate': self.DueDate.isoformat() if self.DueDate else None
+        }
 
-    def __del__(self):
-        if hasattr(self, 'conn') and self.conn:
-            self.conn.commit()
-            self.conn.close()
-
-    def create_to_do_table(self):
-        query = """
-        CREATE TABLE IF NOT EXISTS "Todo" (
-            "id" SERIAL PRIMARY KEY,
-            "Title" TEXT,
-            "Description" TEXT,
-            "_is_deleted" BOOLEAN DEFAULT FALSE,
-            "CreatedOn" DATE DEFAULT CURRENT_DATE,
-            "DueDate" DATE
-        );
-        """
-        cur = self.conn.cursor()
-        cur.execute(query)
-        cur.close()
-
-# ---------------- ToDoModel -----------------
-
+# ---------------- ToDoModel (Backward Compatible) -----------------
 class ToDoModel:
-    def __init__(self):
-        self.conn = self.get_connection()
-
-    def get_connection(self):
-        return psycopg2.connect(
-            host=os.getenv("DB_HOST", "db"),
-            database=os.getenv("DB_NAME", "todoapp"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "password"),
-            port=os.getenv("DB_PORT", "5432")
-        )
-
-    def __del__(self):
-        if hasattr(self, 'conn') and self.conn:
-            self.conn.commit()
-            self.conn.close()
-
     def list_items(self, where_clause=""):
-        query = '''SELECT * FROM "Todo" WHERE _is_deleted != TRUE''' + where_clause
-        cur = self.conn.cursor()
-        cur.execute(query)
-        columns = [desc[0] for desc in cur.description]
-        result_set = cur.fetchall()
-        cur.close()
-        return [dict(zip(columns, row)) for row in result_set]
-
+        query = Todo.query.filter_by(_is_deleted=False)
+        if where_clause:
+            if "id=" in where_clause:
+                try:
+                    todo_id = int(where_clause.split("id=")[1].strip())
+                    query = query.filter_by(id=todo_id)
+                except (ValueError, IndexError):
+                    pass
+        todos = query.all()
+        return [todo.to_dict() for todo in todos]
+    
     def sql_edit_insert(self, var):
         title, description, due_date = var
-
+        parsed_date = None
         if due_date and due_date.strip():
             try:
-                datetime.strptime(due_date, '%Y-%m-%d')
+                parsed_date = datetime.strptime(due_date, '%Y-%m-%d').date()
             except ValueError:
-                due_date = None
-        else:
-            due_date = None
-
-        query = '''INSERT INTO "Todo"("Title", "Description", "DueDate") VALUES (%s, %s, %s)'''
-        cur = self.conn.cursor()
-        cur.execute(query, (title, description, due_date))
-        self.conn.commit()
-        cur.close()
-
+                parsed_date = None
+        new_todo = Todo(Title=title, Description=description, DueDate=parsed_date)
+        db.session.add(new_todo)
+        db.session.commit()
+    
     def sql_delete(self, ID):
-        query = '''UPDATE "Todo" SET _is_deleted = TRUE WHERE id = %s'''
-        cur = self.conn.cursor()
-        cur.execute(query, (ID,))
-        self.conn.commit()
-        cur.close()
-
+        todo = Todo.query.get(ID[0] if isinstance(ID, tuple) else ID)
+        if todo:
+            todo._is_deleted = True
+            db.session.commit()
+    
     def sql_edit(self, var):
         title, description, due_date, old_id = var
-
+        parsed_date = None
         if due_date and due_date.strip():
             try:
-                datetime.strptime(due_date, '%Y-%m-%d')
+                parsed_date = datetime.strptime(due_date, '%Y-%m-%d').date()
             except ValueError:
-                due_date = None
-        else:
-            due_date = None
-
-        query = '''UPDATE "Todo" 
-                   SET "Title" = %s, "Description" = %s, "DueDate" = %s 
-                   WHERE id = %s'''
-        cur = self.conn.cursor()
-        cur.execute(query, (title, description, due_date, old_id))
-        self.conn.commit()
-        cur.close()
+                parsed_date = None
+        todo = Todo.query.get(old_id)
+        if todo:
+            todo.Title = title
+            todo.Description = description
+            todo.DueDate = parsed_date
+            db.session.commit()

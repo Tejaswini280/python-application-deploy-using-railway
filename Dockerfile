@@ -19,16 +19,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
-USER app
+# Make start script executable
+RUN chmod +x start.sh
 
-# Expose port
-EXPOSE 5000
+# Expose port (Railway will set PORT env variable)
+EXPOSE ${PORT:-5000}
 
 # Set environment variables
 ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
+ENV PYTHONUNBUFFERED=1
 
-# Command to run the application
-CMD ["python", "app.py"]
+# Use start.sh script that handles migrations and seeding
+CMD ["./start.sh"]
